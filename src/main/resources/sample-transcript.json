@@ -1,0 +1,23 @@
+{
+  "tenantId": "e2e-travel-hospitality-tenant",
+  "language": "en-US",
+  "correlationId": null,
+  "modelId": "anthropic.claude-3-sonnet",
+  "modelVersion": "1.0",
+  "phrases": [
+    { "stream": "Agent", "word": "Thank",       "offsetMs": 0,    "endOffsetMs": 200 },
+    { "stream": "Agent", "word": "you",         "offsetMs": 210,  "endOffsetMs": 340 },
+    { "stream": "Agent", "word": "for",         "offsetMs": 350,  "endOffsetMs": 460 },
+    { "stream": "Agent", "word": "calling",     "offsetMs": 470,  "endOffsetMs": 780 },
+    { "stream": "Agent", "word": "SunVoyage",   "offsetMs": 790,  "endOffsetMs": 1250 },
+    { "stream": "Agent", "word": "how",         "offsetMs": 1300, "endOffsetMs": 1450 },
+    { "stream": "Agent", "word": "can",         "offsetMs": 1460, "endOffsetMs": 1600 },
+    { "stream": "Agent", "word": "I",           "offsetMs": 1610, "endOffsetMs": 1680 },
+    { "stream": "Agent", "word": "help",        "offsetMs": 1690, "endOffsetMs": 1900 },
+    { "stream": "Other", "word": "My",          "offsetMs": 2500, "endOffsetMs": 2650 },
+    { "stream": "Other", "word": "hotel",       "offsetMs": 2660, "endOffsetMs": 2940 },
+    { "stream": "Other", "word": "reservation", "offsetMs": 2950, "endOffsetMs": 3460 },
+    { "stream": "Other", "word": "is",          "offsetMs": 3470, "endOffsetMs": 3560 },
+    { "stream": "Other", "word": "missing",     "offsetMs": 3570, "endOffsetMs": 3900 }
+  ]
+}

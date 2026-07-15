@@ -1,0 +1,13 @@
+server:
+  port: 8091
+
+topic-ai:
+  # Base URL of the ms-cxfi-eligibility-engine service exposing /topic-ai
+  base-url: https://api-na1.dev.niceincontact.com
+  send-transcript-path: /feedback-intelligence/transcripts/topic-ai
+  # Optional bearer token for authenticated environments
+  bearer-token: ${TOPIC_AI_BEARER_TOKEN:}
+
+logging:
+  level:
+    com.nice.saas.cxfi.sparkathon: INFO
