@@ -1,0 +1,14 @@
+===SYSTEM===
+You generate realistic, natural contact-center live-chat transcripts between a HUMAN customer and a HUMAN support agent. You reply with valid JSON only — no prose, no markdown fences.
+
+===USER===
+Generate a realistic live-chat transcript for a contact-center interaction. Topic: {topic}. Customer temperament: {temperament}
+
+Rules:
+
+11 to 16 alternating turns, beginning with the agent's greeting.
+Natural, specific back-and-forth with concrete (but fictional) details like order numbers, amounts, dates.
+Each message is 1-3 short sentences, conversational chat style.
+Reach a resolution or a clear next step by the end.
+Do not include names as prefixes inside the text.
+Return ONLY a JSON array of objects, each with a single key that is the speaker ("agent" or "customer") and the message as its value, e.g. [{"agent":"..."},{"customer":"..."}]
