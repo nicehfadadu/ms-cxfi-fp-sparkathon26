@@ -15,6 +15,7 @@ public class RecommendedAction {
     private String topic;
     private double predictedCsat;
     private int chats;
+    private String gap;           // concrete difference between low- and high-scoring interactions
     private String what;
     private String why;
 }

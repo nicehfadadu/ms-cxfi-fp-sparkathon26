@@ -30,9 +30,9 @@ public class TopicAggregate {
     /** Number of survey responses backing {@link #avgActualCsat}. */
     private int actualResponses;
 
-    /** {@code s3://} transcript paths sampled from the LOW predicted band. */
-    private List<String> lowSamplePaths = new ArrayList<>();
+    /** Lowest-scoring interactions for this topic (relative band), worst first. */
+    private List<TranscriptSample> lowSamples = new ArrayList<>();
 
-    /** {@code s3://} transcript paths sampled from the HIGH predicted band. */
-    private List<String> highSamplePaths = new ArrayList<>();
+    /** Highest-scoring interactions for this topic (relative band), best first. */
+    private List<TranscriptSample> highSamples = new ArrayList<>();
 }

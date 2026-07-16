@@ -26,7 +26,7 @@ public class ScaleQuestionController {
     public ResponseEntity<Map<String, List<String>>> generate(@RequestBody ScaleQuestionRequest request)
             throws IOException {
         Map<String, List<String>> result = scaleQuestionService.generateScaleQuestions(
-                request.getTenantId(),
+                "11f16fc2-78c4-d4a0-b24e-0242ac110002",
                 request.getUuid()
         );
         return ResponseEntity.ok(result);

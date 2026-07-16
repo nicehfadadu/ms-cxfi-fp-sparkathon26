@@ -14,7 +14,15 @@ public enum TopicType {
     CANCEL("cancel", "a cancellation where the agent tries to retain the customer"),
     REFUND("refund", "a refund request"),
     ACCESS("access", "an account access / password reset issue"),
-    COMPLAINT("complaint", "a complaint that risks escalation");
+    COMPLAINT("complaint", "a complaint that risks escalation"),
+    RETURN("return", "a product return or exchange request"),
+    DELIVERY("delivery", "a delayed or missing delivery complaint"),
+    WARRANTY("warranty", "a warranty claim for a faulty product"),
+    FRAUD("fraud", "a suspected fraudulent or unauthorized charge on the account"),
+    UPGRADE("upgrade", "a plan or subscription upgrade / add-on request"),
+    PRODUCT_INFO("product-info", "a pre-sale product information / availability inquiry"),
+    OUTAGE("outage", "a service outage or downtime report"),
+    FEEDBACK("feedback", "general feedback, a suggestion or a compliment about the service");
 
     private final String key;
     private final String phrase;

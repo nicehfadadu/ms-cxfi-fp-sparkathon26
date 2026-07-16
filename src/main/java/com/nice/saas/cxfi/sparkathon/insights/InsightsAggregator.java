@@ -9,6 +9,7 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -29,13 +30,13 @@ public class InsightsAggregator {
 
     private static final String TABLE_NAME = "d6866-feedback-csat-scores";
 
-    /** Predicted-CSAT band cut-offs used later for contrastive sampling. */
-    static final double LOW_MAX = 2.0;
-    static final double HIGH_MIN = 4.0;
-    /** Max transcripts to remember per band for sampling. */
+    /** Max transcripts fed to the LLM per band (low / high) for each topic. */
     private static final int SAMPLES_PER_BAND = 4;
-    /** A topic must have at least this many scored interactions to be ranked. */
-    private static final int MIN_SCORED_PER_TOPIC = 3;
+    /**
+     * A topic must have at least this many scored interactions to be ranked. Two is the
+     * minimum needed to form a low-vs-high contrast for the gap analysis.
+     */
+    private static final int MIN_SCORED_PER_TOPIC = 2;
 
     private final DynamoDbClient dynamoDbClient;
 
@@ -71,10 +72,8 @@ public class InsightsAggregator {
                 if (predicted != null) {
                     acc.predictedSum += predicted;
                     acc.scored++;
-                    if (predicted <= LOW_MAX && acc.low.size() < SAMPLES_PER_BAND && s3Path != null) {
-                        acc.low.add(s3Path);
-                    } else if (predicted >= HIGH_MIN && acc.high.size() < SAMPLES_PER_BAND && s3Path != null) {
-                        acc.high.add(s3Path);
+                    if (s3Path != null) {
+                        acc.scoredSamples.add(new TranscriptSample(predicted, s3Path));
                     }
                 }
                 if (actual != null) {
@@ -102,8 +101,19 @@ public class InsightsAggregator {
             t.setAvgPredictedCsat(round(a.predictedSum / a.scored));
             t.setActualResponses(a.actualResponses);
             t.setAvgActualCsat(a.actualResponses == 0 ? null : round(a.actualSum / a.actualResponses));
-            t.setLowSamplePaths(a.low);
-            t.setHighSamplePaths(a.high);
+
+            // Relative banding: sort this topic's scored interactions by predicted CSAT and
+            // take the bottom slice as LOW and the top slice as HIGH. This guarantees a
+            // low-vs-high contrast even when every score sits in the same absolute range,
+            // which fixed thresholds could not do.
+            List<TranscriptSample> sorted = new ArrayList<>(a.scoredSamples);
+            sorted.sort(Comparator.comparingDouble(TranscriptSample::getPredictedCsat));
+            int band = Math.min(SAMPLES_PER_BAND, sorted.size() / 2);
+            List<TranscriptSample> low = new ArrayList<>(sorted.subList(0, band));
+            List<TranscriptSample> high = new ArrayList<>(sorted.subList(sorted.size() - band, sorted.size()));
+            Collections.reverse(high); // best first
+            t.setLowSamples(low);
+            t.setHighSamples(high);
             topics.add(t);
         }
         topics.sort(Comparator.comparingDouble(TopicAggregate::getAvgPredictedCsat)); // worst first
@@ -182,7 +192,7 @@ public class InsightsAggregator {
         double predictedSum;
         double actualSum;
         int actualResponses;
-        final List<String> low = new ArrayList<>();
-        final List<String> high = new ArrayList<>();
+        /** Every scored interaction (predicted CSAT + transcript path), banded later. */
+        final List<TranscriptSample> scoredSamples = new ArrayList<>();
     }
 }

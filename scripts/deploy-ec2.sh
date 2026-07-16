@@ -20,10 +20,14 @@ BUCKET="${BUCKET:-fi-sparkathon-d6866}"
 JAR_KEY="${JAR_KEY:-package/app.jar}"
 
 # Launch inputs (override via env as needed)
+# Org policy: instances in us-east-1 must run in VPC_Type_1 (vpc-089712d808f095552),
+# which has only private subnets. No public IP is assigned; reach the app over the
+# corporate VPN (traffic enters via Transit Gateway tgw-0860e58e2316c2bfc) and manage
+# the box via SSM Session Manager. S3/DynamoDB/Bedrock are reached via VPC endpoints.
 AMI_ID="${AMI_ID:-ami-0fd6240f599091088}"        # Amazon Linux 2023, x86_64
 INSTANCE_TYPE="${INSTANCE_TYPE:-t3.small}"
-SUBNET_ID="${SUBNET_ID:-subnet-06e73c00cdb21c5d0}"
-SECURITY_GROUP_ID="${SECURITY_GROUP_ID:-sg-0ad193348e699aba2}"
+SUBNET_ID="${SUBNET_ID:-subnet-0b1ec53748560427e}"   # VPC_Type_1 Subnet_A (us-east-1a, private)
+SECURITY_GROUP_ID="${SECURITY_GROUP_ID:-sg-054e502fa9dc56e53}"  # VPC_Type_1, port 80 scoped to 10.0.0.0/8
 INSTANCE_PROFILE="${INSTANCE_PROFILE:-sparkathon-ec2-s3-profile}"
 OWNER_TAG="${OWNER_TAG:-Rushabh.Pawar}"
 NAME_TAG="${NAME_TAG:-sparkathon-d6866-transcript}"
@@ -40,13 +44,14 @@ echo ">> Uploading jar to s3://$BUCKET/$JAR_KEY ..."
 
 echo ">> Launching EC2 instance..."
 # NOTE: the org SCP requires the Owner tag on the EBS volume too, not just the instance.
+# Private subnet: no public IP. Owner tag required on the volume too (org SCP).
 INSTANCE_ID=$("${AWS[@]}" ec2 run-instances \
   --image-id "$AMI_ID" \
   --instance-type "$INSTANCE_TYPE" \
   --subnet-id "$SUBNET_ID" \
   --security-group-ids "$SECURITY_GROUP_ID" \
   --iam-instance-profile "Name=$INSTANCE_PROFILE" \
-  --associate-public-ip-address \
+  --no-associate-public-ip-address \
   --user-data "file://$SCRIPT_DIR/user-data.sh" \
   --tag-specifications \
     "ResourceType=instance,Tags=[{Key=Owner,Value=$OWNER_TAG},{Key=Name,Value=$NAME_TAG}]" \
@@ -57,22 +62,30 @@ echo "   InstanceId: $INSTANCE_ID"
 echo ">> Waiting for instance to run..."
 "${AWS[@]}" ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 
-PUBLIC_DNS=$("${AWS[@]}" ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-  --query 'Reservations[0].Instances[0].PublicDnsName' --output text)
+PRIVATE_IP=$("${AWS[@]}" ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
 
 echo ">> Waiting for the app to come up (bootstrap installs Java + starts service)..."
-HEALTH_URL="http://$PUBLIC_DNS/health"
-until curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL" 2>/dev/null \
-      | grep -q '200'; do
+echo "   The instance has no public IP. Health is checked against the private IP;"
+echo "   this only succeeds if you are on the corporate VPN. If not, verify via SSM:"
+echo "     aws --profile $AWS_PROFILE --region $AWS_REGION ssm start-session --target $INSTANCE_ID"
+echo "     # then on the box:  curl -s http://localhost:80/health"
+HEALTH_URL="http://$PRIVATE_IP/health"
+for i in $(seq 1 30); do
+  if curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$HEALTH_URL" 2>/dev/null | grep -q '200'; then
+    echo "   health OK via VPN"
+    break
+  fi
   sleep 10
 done
 
-GENERATE_URL="http://$PUBLIC_DNS/sparkathon/transcript/generate"
+GENERATE_URL="http://$PRIVATE_IP/sparkathon/transcript/generate"
 echo ""
-echo "Deployed. Health:   $HEALTH_URL"
-echo "          Endpoint: $GENERATE_URL"
+echo "Deployed to VPC_Type_1 (private). InstanceId: $INSTANCE_ID  PrivateIP: $PRIVATE_IP"
+echo "  Health:   $HEALTH_URL   (VPN only)"
+echo "  Endpoint: $GENERATE_URL (VPN only)"
 echo ""
-echo "Sample request:"
+echo "Sample request (run on VPN, or from the box via SSM against localhost):"
 echo "  curl -X POST $GENERATE_URL \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"topic\":\"billing\",\"temperament\":\"Frustrated\"}'"

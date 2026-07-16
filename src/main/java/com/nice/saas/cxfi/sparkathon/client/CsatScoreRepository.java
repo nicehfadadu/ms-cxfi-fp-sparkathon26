@@ -34,6 +34,9 @@ public class CsatScoreRepository {
 
     private static final String TABLE_NAME = "d6866-feedback-csat-scores";
 
+    /** Every generated transcript is recorded under this fixed survey campaign. */
+    private static final String CAMPAIGN = "Post Chat CSAT Survey";
+
     private final DynamoDbClient dynamoDbClient;
     private final ObjectMapper objectMapper;
 
@@ -67,6 +70,7 @@ public class CsatScoreRepository {
         item.put("transcript_s3_path", AttributeValue.fromS(transcriptS3Path));
         item.put("transcript_fragment_s3_path", AttributeValue.fromS(fragmentS3Path));
         item.put("created_at", AttributeValue.fromS(Instant.now().toString()));
+        item.put("campaign", AttributeValue.fromS(CAMPAIGN));
 
         if (actualCsatScore != null) {
             item.put("actual_csat_score", AttributeValue.fromN(actualCsatScore.toString()));

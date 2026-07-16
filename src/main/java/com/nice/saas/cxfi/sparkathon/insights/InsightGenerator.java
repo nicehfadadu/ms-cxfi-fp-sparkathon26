@@ -38,8 +38,10 @@ public class InsightGenerator {
     private static final String SYSTEM_MARKER = "===SYSTEM===";
     private static final String USER_MARKER = "===USER===";
 
-    private static final String MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
-    private static final int MAX_TOKENS = 2048;
+    // Claude 3 Sonnet — invoked on-demand directly (no cross-region inference profile).
+    private static final String MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0";
+    // 4096 is the model's maximum output tokens; requesting more is rejected by Bedrock.
+    private static final int MAX_TOKENS = 4096;
     private static final float TEMPERATURE = 0.3f;
 
     private final BedrockRuntimeClient client;
@@ -95,24 +97,31 @@ public class InsightGenerator {
     private String buildTopicBlocks(Aggregation agg) {
         StringBuilder sb = new StringBuilder();
         for (TopicAggregate t : agg.getTopics()) {
-            List<String> low = sampler.excerpts(t.getLowSamplePaths());
-            List<String> high = sampler.excerpts(t.getHighSamplePaths());
             sb.append("### topic: ").append(t.getTopic())
-              .append(" | predictedCsat=").append(t.getAvgPredictedCsat())
-              .append(" | interactions=").append(t.getCount()).append('\n');
-            sb.append("LOW-scoring samples:\n").append(joinSamples(low)).append('\n');
-            sb.append("HIGH-scoring samples:\n").append(joinSamples(high)).append("\n\n");
+              .append(" | avgPredictedCsat=").append(t.getAvgPredictedCsat())
+              .append(" | interactions=").append(t.getCount())
+              .append(" | scored=").append(t.getScored()).append('\n');
+            sb.append("LOW-scoring interactions (what is going wrong):\n")
+              .append(renderSamples(t.getLowSamples())).append('\n');
+            sb.append("HIGH-scoring interactions (what is going right):\n")
+              .append(renderSamples(t.getHighSamples())).append("\n\n");
         }
         return sb.toString().trim();
     }
 
-    private String joinSamples(List<String> samples) {
-        if (samples.isEmpty()) {
+    /** Fetches each sample's transcript and prefixes it with the sample's predicted CSAT. */
+    private String renderSamples(List<TranscriptSample> samples) {
+        if (samples == null || samples.isEmpty()) {
             return "(none)";
         }
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < samples.size(); i++) {
-            sb.append("- sample ").append(i + 1).append(":\n").append(samples.get(i)).append('\n');
+        int i = 1;
+        for (TranscriptSample s : samples) {
+            List<String> ex = sampler.excerpts(List.of(s.getS3Path()));
+            String body = ex.isEmpty() ? "(transcript unavailable)" : ex.get(0);
+            sb.append("- sample ").append(i++)
+              .append(" (predictedCsat=").append(s.getPredictedCsat()).append("):\n")
+              .append(body).append('\n');
         }
         return sb.toString().trim();
     }
@@ -139,6 +148,7 @@ public class InsightGenerator {
                 a.setRank(rank++);
                 a.setTopic(topic);
                 a.setPriority(normalizePriority(node.path("priority").asText("medium")));
+                a.setGap(node.path("gap").asText(""));
                 a.setWhat(node.path("what").asText(""));
                 a.setWhy(node.path("why").asText(""));
                 a.setPredictedCsat(agtopic.getAvgPredictedCsat());

@@ -1,14 +1,19 @@
 ===SYSTEM===
-You generate realistic, natural contact-center live-chat transcripts between a HUMAN customer and a HUMAN support agent. You reply with valid JSON only — no prose, no markdown fences.
+You are an expert conversation designer who writes realistic, natural contact-center live-chat transcripts between a HUMAN customer and a HUMAN support agent. Every transcript must be tight, purposeful, and unmistakably about its topic. You reply with valid JSON only — no prose, no markdown fences.
 
 ===USER===
-Generate a realistic live-chat transcript for a contact-center interaction. Topic: {topic}. Customer temperament: {temperament}
+Write a smart, self-contained live-chat transcript for a contact-center interaction.
+Topic: {topic}
+Customer temperament: {temperament}
+
+Make it excellent:
+- PROBLEM & PURPOSE: The customer's problem and what they want (their goal) must be crystal clear within the first two turns. By the end, the outcome — resolved, escalated, or a concrete next step — must be explicit.
+- SMART & INNOVATIVE: Avoid generic filler and boilerplate. Give the scenario a fresh, specific angle — an unusual complication, a clever agent workaround, a realistic edge case — so no two transcripts feel the same.
+- CONSISTENT TEMPERAMENT: The customer's temperament ({temperament}) must stay consistent in EVERY customer turn, from the first message to the last. Do not let the customer's mood drift or flip (e.g. do not start angry and end cheerful). Their word choice, tone, and sentiment should read the same throughout so the overall sentiment is unambiguous. Show the agent adapting to that temperament, but the customer's temperament itself does not change.
+- CONCRETE: Use realistic (but fictional) details — order numbers, amounts, dates, product names, ticket IDs — that anchor the conversation.
 
 Rules:
-
-11 to 16 alternating turns, beginning with the agent's greeting.
-Natural, specific back-and-forth with concrete (but fictional) details like order numbers, amounts, dates.
-Each message is 1-3 short sentences, conversational chat style.
-Reach a resolution or a clear next step by the end.
-Do not include names as prefixes inside the text.
-Return ONLY a JSON array of objects, each with a single key that is the speaker ("agent" or "customer") and the message as its value, e.g. [{"agent":"..."},{"customer":"..."}]
+- Exactly 6 or 7 alternating turns total, beginning with the agent's greeting and ending with the customer or the agent closing the loop.
+- Each message is 1-3 short, conversational chat-style sentences. No names as prefixes inside the text.
+- Every turn must move the conversation forward — no repetition or padding.
+- Return ONLY a JSON array of objects, each with a single key that is the speaker ("agent" or "customer") and the message as its value, e.g. [{"agent":"..."},{"customer":"..."}]
