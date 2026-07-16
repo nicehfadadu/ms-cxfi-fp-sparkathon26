@@ -2,6 +2,7 @@ package com.nice.saas.cxfi.sparkathon.client;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nice.saas.cxfi.sparkathon.model.CsatPrediction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Persists a CSAT-score record to the {@code d6866-feedback-csat-scores} DynamoDB table.
@@ -86,19 +88,27 @@ public class CsatScoreRepository {
 
     /**
      * Updates an existing DynamoDB record with detected topics, subtopics, the full raw
-     * TopicAI response, and the predicted CSAT score — all in a single {@code UpdateItem}.
+     * TopicAI response, and the full LLM CSAT prediction — all in a single {@code UpdateItem}.
      *
-     * @param tenantId           partition key
-     * @param uuid               sort key (transcript id)
-     * @param topics             topic names from primaryTopic + secondaryTopics (stored as SS)
-     * @param subTopics          subTopic values from the TopicAI result (stored as SS, may be empty)
-     * @param predictedCsatScore predicted CSAT in [1.0, 5.0], or {@code null} if unavailable
-     * @param topicAiResponse    the complete TopicAI response object; serialized to JSON and
-     *                           stored as the {@code topicai_response} string attribute
+     * <p>The top-level {@code predicted_csat_score} column is set from
+     * {@link CsatPrediction#getPredictedCsat()} (kept as a plain number for aggregation).
+     * The remaining LLM fields — confidence, sentimentTrajectory, resolutionStatus,
+     * repeat-contact and churn risks, drivers, rationale, topicsDetected, plus a
+     * {@code predictedAt} timestamp — are packed into a DynamoDB Map column named
+     * {@code prediction_metadata}. The raw TopicAI response is serialized to JSON and
+     * stored as the {@code topicai_response} string attribute.
+     *
+     * @param tenantId        partition key
+     * @param uuid            sort key (transcript id)
+     * @param topics          topic names from primaryTopic + secondaryTopics (stored as SS)
+     * @param subTopics       subTopic values from the TopicAI result (stored as SS, may be empty)
+     * @param prediction      full LLM CSAT prediction, or {@code null} if the LLM call failed
+     * @param topicAiResponse the complete TopicAI response object; serialized to JSON and
+     *                        stored as the {@code topicai_response} string attribute
      */
     public void updateTopics(String tenantId, String uuid,
                              List<String> topics, List<String> subTopics,
-                             Double predictedCsatScore, Object topicAiResponse) {
+                             CsatPrediction prediction, Object topicAiResponse) {
         Map<String, AttributeValue> key = Map.of(
                 "tenantId", AttributeValue.fromS(tenantId),
                 "uuid", AttributeValue.fromS(uuid)
@@ -117,10 +127,16 @@ public class CsatScoreRepository {
             setClauses.add("sub_topics_detected = :subtopics");
         }
 
-        if (predictedCsatScore != null) {
+        if (prediction
+                != null && prediction.getPredictedCsat() != null) {
             expressionValues.put(":predicted", AttributeValue.fromN(
-                    String.format("%.2f", predictedCsatScore)));
+                    String.format("%.2f", prediction.getPredictedCsat().doubleValue())));
             setClauses.add("predicted_csat_score = :predicted");
+        }
+
+        if (prediction != null) {
+            expressionValues.put(":metadata", predictionMetadata(prediction));
+            setClauses.add("prediction_metadata = :metadata");
         }
 
         if (topicAiResponse != null) {
@@ -147,7 +163,8 @@ public class CsatScoreRepository {
                 .build());
 
         log.info("Updated TopicAI results for tenantId={} uuid={} topics={} subTopics={} predictedCsat={}",
-                tenantId, uuid, topics, subTopics, predictedCsatScore);
+                tenantId, uuid, topics, subTopics,
+                prediction == null ? null : prediction.getPredictedCsat());
     }
 
     /**
@@ -193,56 +210,84 @@ public class CsatScoreRepository {
     }
 
     /**
-     * Fills in the prediction fields on an existing row created by {@link #save}. Called
-     * after the chat is resolved/closed and the Bedrock CSAT predictor has scored it.
+     * Writes {@code predicted_csat_score} + {@code prediction_metadata} onto an existing
+     * row without touching topics or subtopics. Suitable for a re-score / backfill path
+     * where the TopicAI pipeline has already populated the topic columns.
      *
-     * @param tenantId              partition key
-     * @param uuid                  sort key (the transcript id)
-     * @param predictedCsatScore    predicted CSAT (1..5), required
-     * @param predictionConfidence  model self-reported confidence 0..1, or {@code null}
-     * @param topicsDetected        topics inferred from the chat, or {@code null}/empty
+     * @param tenantId    partition key
+     * @param uuid        sort key (the transcript id)
+     * @param prediction  full LLM prediction; {@code predictedCsat} must be non-null
      */
-    public void updatePrediction(String tenantId,
-                                 String uuid,
-                                 Double predictedCsatScore,
-                                 Double predictionConfidence,
-                                 List<String> topicsDetected) {
+    public void updatePrediction(String tenantId, String uuid, CsatPrediction prediction) {
+        if (prediction == null || prediction.getPredictedCsat() == null) {
+            throw new IllegalArgumentException("prediction and prediction.predictedCsat are required");
+        }
 
-        Map<String, String> names = new HashMap<>();
+        Map<String, AttributeValue> key = Map.of(
+                "tenantId", AttributeValue.fromS(tenantId),
+                "uuid", AttributeValue.fromS(uuid)
+        );
+
         Map<String, AttributeValue> values = new HashMap<>();
-        List<String> sets = new ArrayList<>();
-
-        names.put("#p", "predicted_csat_score");
-        values.put(":p", AttributeValue.fromN(predictedCsatScore.toString()));
-        sets.add("#p = :p");
-
-        names.put("#u", "predicted_at");
-        values.put(":u", AttributeValue.fromS(Instant.now().toString()));
-        sets.add("#u = :u");
-
-        if (predictionConfidence != null) {
-            names.put("#c", "prediction_confidence");
-            values.put(":c", AttributeValue.fromN(predictionConfidence.toString()));
-            sets.add("#c = :c");
-        }
-        if (topicsDetected != null && !topicsDetected.isEmpty()) {
-            names.put("#t", "topics_detected");
-            values.put(":t", AttributeValue.fromSs(topicsDetected));
-            sets.add("#t = :t");
-        }
-
-        Map<String, AttributeValue> key = new HashMap<>();
-        key.put("tenantId", AttributeValue.fromS(tenantId));
-        key.put("uuid", AttributeValue.fromS(uuid));
+        values.put(":predicted", AttributeValue.fromN(
+                String.format("%.2f", prediction.getPredictedCsat().doubleValue())));
+        values.put(":metadata", predictionMetadata(prediction));
 
         dynamoDbClient.updateItem(UpdateItemRequest.builder()
                 .tableName(TABLE_NAME)
                 .key(key)
-                .updateExpression("SET " + String.join(", ", sets))
-                .expressionAttributeNames(names)
+                .updateExpression("SET predicted_csat_score = :predicted, prediction_metadata = :metadata")
                 .expressionAttributeValues(values)
                 .build());
 
-        log.info("Updated CSAT prediction tenantId={} uuid={} score={}", tenantId, uuid, predictedCsatScore);
+        log.info("Updated CSAT prediction tenantId={} uuid={} score={}",
+                tenantId, uuid, prediction.getPredictedCsat());
+    }
+
+    /**
+     * Packs a {@link CsatPrediction} into a DynamoDB Map attribute so all the LLM
+     * fields (confidence, sentiment trajectory, resolution status, repeat/churn risks,
+     * drivers, rationale, topicsDetected) plus a server-side {@code predictedAt}
+     * timestamp travel together on the row. Null/blank fields are omitted so the
+     * stored shape stays compact.
+     */
+    private static AttributeValue predictionMetadata(CsatPrediction p) {
+        Map<String, AttributeValue> m = new HashMap<>();
+        if (p.getPredictedCsat() != null) {
+            m.put("predictedCsat", AttributeValue.fromN(p.getPredictedCsat().toString()));
+        }
+        if (p.getConfidence() != null) {
+            m.put("confidence", AttributeValue.fromN(p.getConfidence().toString()));
+        }
+        putStringIfPresent(m, "sentimentTrajectory", p.getSentimentTrajectory());
+        putStringIfPresent(m, "resolutionStatus", p.getResolutionStatus());
+        putStringIfPresent(m, "predictedRepeatContactRisk", p.getPredictedRepeatContactRisk());
+        putStringIfPresent(m, "predictedChurnRisk", p.getPredictedChurnRisk());
+        putStringIfPresent(m, "rationale", p.getRationale());
+        List<String> topics = trimmed(p.getTopicsDetected());
+        if (!topics.isEmpty()) {
+            m.put("topicsDetected", AttributeValue.fromL(topics.stream()
+                    .map(AttributeValue::fromS)
+                    .collect(Collectors.toList())));
+        }
+        List<String> drivers = trimmed(p.getDrivers());
+        if (!drivers.isEmpty()) {
+            m.put("drivers", AttributeValue.fromL(drivers.stream()
+                    .map(AttributeValue::fromS)
+                    .collect(Collectors.toList())));
+        }
+        m.put("predictedAt", AttributeValue.fromS(Instant.now().toString()));
+        return AttributeValue.fromM(m);
+    }
+
+    private static void putStringIfPresent(Map<String, AttributeValue> m, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            m.put(key, AttributeValue.fromS(value));
+        }
+    }
+
+    private static List<String> trimmed(List<String> in) {
+        if (in == null) return List.of();
+        return in.stream().filter(s -> s != null && !s.isBlank()).collect(Collectors.toList());
     }
 }

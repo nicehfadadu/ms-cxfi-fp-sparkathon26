@@ -1,6 +1,7 @@
 package com.nice.saas.cxfi.sparkathon.client;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.nice.saas.cxfi.sparkathon.model.CsatPrediction;
 import com.nice.saas.cxfi.sparkathon.model.SendTranscriptRequest;
 import com.nice.saas.cxfi.sparkathon.model.SendTranscriptResponse;
 import com.nice.saas.cxfi.sparkathon.model.TopicAiResultResponse;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Orchestrates the full TopicAI pipeline for a stored transcript:
@@ -30,7 +32,8 @@ import java.util.List;
  *         <li>subtopics = {@code subTopic} field from all TopicDetail entries</li>
  *       </ul>
  *   </li>
- *   <li>Compute a predicted CSAT score via {@link CsatScorePredictor}.</li>
+ *   <li>Predict a CSAT score for the chat by invoking {@link BedrockCsatPredictor}
+ *       against the raw transcript.json in S3.</li>
  *   <li>Write topics, subtopics and predicted CSAT back to DynamoDB in one
  *       {@code UpdateItem}.</li>
  * </ol>
@@ -41,20 +44,23 @@ public class TopicAiPipelineService {
     private static final Logger log = LoggerFactory.getLogger(TopicAiPipelineService.class);
 
     private static final TypeReference<SendTranscriptRequest> FRAGMENT_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<Map<String, String>>> TRANSCRIPT_TYPE = new TypeReference<>() {};
+    private static final String FRAGMENT_FILE_SUFFIX = "/transcript-fragment.json";
+    private static final String TRANSCRIPT_FILE_SUFFIX = "/transcript.json";
 
     private final TranscriptS3Reader s3Reader;
     private final TopicAiClient topicAiClient;
     private final CsatScoreRepository csatScoreRepository;
-    private final CsatScorePredictor csatScorePredictor;
+    private final BedrockCsatPredictor bedrockCsatPredictor;
 
     public TopicAiPipelineService(TranscriptS3Reader s3Reader,
                                   TopicAiClient topicAiClient,
                                   CsatScoreRepository csatScoreRepository,
-                                  CsatScorePredictor csatScorePredictor) {
+                                  BedrockCsatPredictor bedrockCsatPredictor) {
         this.s3Reader = s3Reader;
         this.topicAiClient = topicAiClient;
         this.csatScoreRepository = csatScoreRepository;
-        this.csatScorePredictor = csatScorePredictor;
+        this.bedrockCsatPredictor = bedrockCsatPredictor;
     }
 
     /** Fire-and-forget: runs the pipeline on a Spring async thread. */
@@ -116,16 +122,29 @@ public class TopicAiPipelineService {
         List<String> topics = extractTopics(result);
         List<String> subTopics = extractSubTopics(result);
 
-        // Step 5: Compute predicted CSAT
-        Double predictedCsat = csatScorePredictor.predict(result);
+        // Step 5: Predict CSAT via Bedrock LLM using the raw chat transcript.
+        // The transcript lives alongside the fragment under d6866/<transcriptId>/transcript.json.
+        CsatPrediction prediction = null;
+        try {
+            String transcriptS3Uri = fragmentS3Uri.replace(FRAGMENT_FILE_SUFFIX, TRANSCRIPT_FILE_SUFFIX);
+            List<Map<String, String>> transcript = s3Reader.read(transcriptS3Uri, TRANSCRIPT_TYPE);
+            String primaryTopicHint = topics.isEmpty() ? null : topics.get(0);
+            prediction = bedrockCsatPredictor.predict(transcript, primaryTopicHint, null);
+        } catch (Exception e) {
+            log.error("Bedrock CSAT prediction failed — transcriptId={}: {}", transcriptId, e.getMessage());
+            // Continue: topics/subTopics are still worth writing even if the LLM score is missing.
+        }
+
+        Double predictedCsat = (prediction == null || prediction.getPredictedCsat() == null)
+                ? null : prediction.getPredictedCsat().doubleValue();
 
         log.info("TopicAI result parsed — transcriptId={} topics={} subTopics={} predictedCsat={}",
                 transcriptId, topics, subTopics, predictedCsat);
 
-        // Step 6: Write topics, subtopics, predicted CSAT, and the full raw TopicAI response
-        //         to DynamoDB in a single UpdateItem
+        // Step 6: Write topics, subtopics, LLM prediction (score + metadata map), and the
+        //         full raw TopicAI response to DynamoDB in a single UpdateItem
         try {
-            csatScoreRepository.updateTopics(tenantId, transcriptId, topics, subTopics, predictedCsat, result);
+            csatScoreRepository.updateTopics(tenantId, transcriptId, topics, subTopics, prediction, result);
         } catch (Exception e) {
             log.error("DynamoDB update failed — transcriptId={}: {}", transcriptId, e.getMessage());
             return PipelineResult.failure(transcriptId, "DynamoDB update failed: " + e.getMessage());

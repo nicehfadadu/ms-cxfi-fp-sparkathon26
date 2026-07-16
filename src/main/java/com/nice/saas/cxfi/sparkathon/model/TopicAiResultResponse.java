@@ -12,7 +12,7 @@ import java.util.List;
  */
 @Data
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class TopicAiResultResponse {
+public class    TopicAiResultResponse {
 
     private String version;
     private String processingType;
