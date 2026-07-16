@@ -14,16 +14,25 @@ public class Aggregation {
 
     private String tenantId;
 
-    /** Total interactions for the tenant (all rows). */
+    /** "respondent" or "non-respondent" — which segment this aggregation covers. */
+    private String segment;
+
+    /** Interactions in this segment. */
     private int totalInteractions;
 
     /** Interactions with a non-null predicted CSAT. */
     private int predictedScored;
 
-    /** Average predicted CSAT across the whole population (scored rows). */
+    /** Average predicted CSAT across this segment (scored rows). */
     private double avgPredictedCsat;
 
-    /** Topics ranked ascending by predicted CSAT (worst first), after the min-count guard. */
+    /** Average actual (survey) CSAT — respondent segment only, else {@code null}. */
+    private Double avgActualCsat;
+
+    /**
+     * Topics ranked worst-first. Non-respondent segment ranks by predicted CSAT ascending;
+     * respondent segment ranks by actual CSAT ascending (we have ground truth there).
+     */
     private List<TopicAggregate> topics = new ArrayList<>();
 
     /** Distinct topic labels the LLM is allowed to reference (verbatim from the data). */

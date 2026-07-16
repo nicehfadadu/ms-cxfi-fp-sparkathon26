@@ -24,15 +24,30 @@ public class TopicAggregate {
     /** Average predicted CSAT over the scored interactions — the ranking signal. */
     private double avgPredictedCsat;
 
-    /** Average survey CSAT over responders, or {@code null} — context only, never ranked on. */
+    /** Average survey CSAT over responders, or {@code null}. Ranking signal for the respondent segment. */
     private Double avgActualCsat;
 
     /** Number of survey responses backing {@link #avgActualCsat}. */
     private int actualResponses;
 
-    /** Lowest-scoring interactions for this topic (relative band), worst first. */
+    /** Average (actual − predicted) over responders — respondent segment only, else {@code null}. */
+    private Double avgResidual;
+
+    /**
+     * Calibration verdict for the respondent segment: "over-predicted" (customers unhappier
+     * than the model thought), "under-predicted", or "aligned". {@code null} for non-respondents.
+     */
+    private String direction;
+
+    /**
+     * Contrastive band A. Non-respondent segment: lowest predicted (worst first).
+     * Respondent segment: most over-predicted (actual far below predicted).
+     */
     private List<TranscriptSample> lowSamples = new ArrayList<>();
 
-    /** Highest-scoring interactions for this topic (relative band), best first. */
+    /**
+     * Contrastive band B. Non-respondent segment: highest predicted (best first).
+     * Respondent segment: most under-predicted (actual far above predicted).
+     */
     private List<TranscriptSample> highSamples = new ArrayList<>();
 }

@@ -25,16 +25,19 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * The single LLM step: turns the deterministic per-topic aggregates plus sampled
- * transcript excerpts into prioritized actions via Amazon Bedrock. Output topics are
- * validated against the allowed set so the model can never introduce a new topic.
+ * The LLM step: turns the deterministic per-topic aggregates plus sampled transcript
+ * excerpts into prioritized actions via Amazon Bedrock. Each segment gets its own
+ * Bedrock call with its own prompt — respondents are analysed on actual-vs-predicted,
+ * non-respondents on predicted alone. Output topics are validated against the allowed
+ * set so the model can never introduce a new topic.
  */
 @Component
 public class InsightGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(InsightGenerator.class);
 
-    private static final String PROMPT_RESOURCE = "prompts/insights-prompt.txt";
+    private static final String NON_RESPONDENT_PROMPT = "prompts/insights-prompt.txt";
+    private static final String RESPONDENT_PROMPT = "prompts/insights-respondent-prompt.txt";
     private static final String SYSTEM_MARKER = "===SYSTEM===";
     private static final String USER_MARKER = "===USER===";
 
@@ -48,69 +51,90 @@ public class InsightGenerator {
     private final TranscriptSampler sampler;
     private final ObjectMapper objectMapper;
 
-    private final String systemPrompt;
-    private final String userPromptTemplate;
+    private final Prompt nonRespondentPrompt;
+    private final Prompt respondentPrompt;
 
     public InsightGenerator(BedrockRuntimeClient client, TranscriptSampler sampler, ObjectMapper objectMapper) {
         this.client = client;
         this.sampler = sampler;
         this.objectMapper = objectMapper;
-
-        String raw = readResource(PROMPT_RESOURCE);
-        int userIdx = raw.indexOf(USER_MARKER);
-        if (!raw.contains(SYSTEM_MARKER) || userIdx < 0) {
-            throw new IllegalStateException(PROMPT_RESOURCE + " must contain both markers");
-        }
-        this.systemPrompt = raw.substring(raw.indexOf(SYSTEM_MARKER) + SYSTEM_MARKER.length(), userIdx).trim();
-        this.userPromptTemplate = raw.substring(userIdx + USER_MARKER.length()).trim();
+        this.nonRespondentPrompt = loadPrompt(NON_RESPONDENT_PROMPT);
+        this.respondentPrompt = loadPrompt(RESPONDENT_PROMPT);
     }
 
-    /** Builds prioritized actions for the ranked topics in the aggregation. */
-    public List<RecommendedAction> generate(Aggregation agg) {
-        if (agg.getTopics().isEmpty()) {
+    /** Predicted-only analysis for interactions with no survey response. */
+    public List<RecommendedAction> generateNonRespondent(Aggregation agg) {
+        if (agg == null || agg.getTopics().isEmpty()) {
             return List.of();
         }
-
-        String topicBlocks = buildTopicBlocks(agg);
-        String userPrompt = userPromptTemplate
+        String userPrompt = nonRespondentPrompt.user
                 .replace("{avgPredictedCsat}", String.valueOf(agg.getAvgPredictedCsat()))
                 .replace("{predictedScored}", String.valueOf(agg.getPredictedScored()))
                 .replace("{allowedTopics}", String.join(", ", agg.getAllowedTopics()))
-                .replace("{topicBlocks}", topicBlocks);
+                .replace("{topicBlocks}", buildTopicBlocks(agg, false));
+        String text = converse(nonRespondentPrompt.system, userPrompt, "non-respondent", agg.getTopics().size());
+        return parseActions(text, agg, false);
+    }
 
-        log.info("Generating insights via Bedrock model={} for {} topics", MODEL_ID, agg.getTopics().size());
+    /** Actual-vs-predicted analysis for interactions where a survey score came back. */
+    public List<RecommendedAction> generateRespondent(Aggregation agg) {
+        if (agg == null || agg.getTopics().isEmpty()) {
+            return List.of();
+        }
+        String userPrompt = respondentPrompt.user
+                .replace("{avgPredictedCsat}", String.valueOf(agg.getAvgPredictedCsat()))
+                .replace("{avgActualCsat}", String.valueOf(agg.getAvgActualCsat()))
+                .replace("{predictedScored}", String.valueOf(agg.getPredictedScored()))
+                .replace("{allowedTopics}", String.join(", ", agg.getAllowedTopics()))
+                .replace("{topicBlocks}", buildTopicBlocks(agg, true));
+        String text = converse(respondentPrompt.system, userPrompt, "respondent", agg.getTopics().size());
+        return parseActions(text, agg, true);
+    }
 
+    private String converse(String system, String userPrompt, String segment, int topicCount) {
+        log.info("Generating {} insights via Bedrock model={} for {} topics", segment, MODEL_ID, topicCount);
         ConverseResponse response = client.converse(req -> req
                 .modelId(MODEL_ID)
-                .system(SystemContentBlock.fromText(systemPrompt))
+                .system(SystemContentBlock.fromText(system))
                 .messages(Message.builder()
                         .role(ConversationRole.USER)
                         .content(ContentBlock.fromText(userPrompt))
                         .build())
                 .inferenceConfig(cfg -> cfg.maxTokens(MAX_TOKENS).temperature(TEMPERATURE)));
-
-        String text = response.output().message().content().get(0).text();
-        return parseActions(text, agg);
+        return response.output().message().content().get(0).text();
     }
 
-    /** Renders each topic's numbers + low/high transcript excerpts for the prompt. */
-    private String buildTopicBlocks(Aggregation agg) {
+    /** Renders each topic's numbers + contrastive transcript excerpts for the prompt. */
+    private String buildTopicBlocks(Aggregation agg, boolean respondent) {
         StringBuilder sb = new StringBuilder();
         for (TopicAggregate t : agg.getTopics()) {
             sb.append("### topic: ").append(t.getTopic())
-              .append(" | avgPredictedCsat=").append(t.getAvgPredictedCsat())
-              .append(" | interactions=").append(t.getCount())
+              .append(" | avgPredictedCsat=").append(t.getAvgPredictedCsat());
+            if (respondent) {
+                sb.append(" | avgActualCsat=").append(t.getAvgActualCsat())
+                  .append(" | avgResidual=").append(t.getAvgResidual())
+                  .append(" | calibration=").append(t.getDirection());
+            }
+            sb.append(" | interactions=").append(t.getCount())
               .append(" | scored=").append(t.getScored()).append('\n');
-            sb.append("LOW-scoring interactions (what is going wrong):\n")
-              .append(renderSamples(t.getLowSamples())).append('\n');
-            sb.append("HIGH-scoring interactions (what is going right):\n")
-              .append(renderSamples(t.getHighSamples())).append("\n\n");
+
+            if (respondent) {
+                sb.append("OVER-predicted interactions (actual far BELOW predicted):\n")
+                  .append(renderSamples(t.getLowSamples(), true)).append('\n');
+                sb.append("UNDER-predicted interactions (actual far ABOVE predicted):\n")
+                  .append(renderSamples(t.getHighSamples(), true)).append("\n\n");
+            } else {
+                sb.append("LOW-scoring interactions (what is going wrong):\n")
+                  .append(renderSamples(t.getLowSamples(), false)).append('\n');
+                sb.append("HIGH-scoring interactions (what is going right):\n")
+                  .append(renderSamples(t.getHighSamples(), false)).append("\n\n");
+            }
         }
         return sb.toString().trim();
     }
 
-    /** Fetches each sample's transcript and prefixes it with the sample's predicted CSAT. */
-    private String renderSamples(List<TranscriptSample> samples) {
+    /** Fetches each sample's transcript and prefixes it with its scores. */
+    private String renderSamples(List<TranscriptSample> samples, boolean respondent) {
         if (samples == null || samples.isEmpty()) {
             return "(none)";
         }
@@ -119,15 +143,18 @@ public class InsightGenerator {
         for (TranscriptSample s : samples) {
             List<String> ex = sampler.excerpts(List.of(s.getS3Path()));
             String body = ex.isEmpty() ? "(transcript unavailable)" : ex.get(0);
-            sb.append("- sample ").append(i++)
-              .append(" (predictedCsat=").append(s.getPredictedCsat()).append("):\n")
-              .append(body).append('\n');
+            sb.append("- sample ").append(i++).append(" (predictedCsat=").append(s.getPredictedCsat());
+            if (respondent) {
+                sb.append(", actualCsat=").append(s.getActualCsat())
+                  .append(", residual=").append(s.residual());
+            }
+            sb.append("):\n").append(body).append('\n');
         }
         return sb.toString().trim();
     }
 
     /** Parses the model's JSON, keeps only allowed topics, and fills in the code-computed numbers. */
-    private List<RecommendedAction> parseActions(String modelOutput, Aggregation agg) {
+    private List<RecommendedAction> parseActions(String modelOutput, Aggregation agg, boolean respondent) {
         String json = extractJsonArray(modelOutput);
         List<RecommendedAction> actions = new ArrayList<>();
         Set<String> allowed = new HashSet<>(agg.getAllowedTopics());
@@ -153,6 +180,12 @@ public class InsightGenerator {
                 a.setWhy(node.path("why").asText(""));
                 a.setPredictedCsat(agtopic.getAvgPredictedCsat());
                 a.setChats(agtopic.getCount());
+                if (respondent) {
+                    a.setActualCsat(agtopic.getAvgActualCsat());
+                    a.setResidual(agtopic.getAvgResidual());
+                    a.setDirection(agtopic.getDirection());
+                    a.setReason(node.path("reason").asText(""));
+                }
                 actions.add(a);
             }
         } catch (IOException e) {
@@ -177,11 +210,33 @@ public class InsightGenerator {
         return (start >= 0 && end > start) ? text.substring(start, end + 1) : text.trim();
     }
 
+    private Prompt loadPrompt(String path) {
+        String raw = readResource(path);
+        int userIdx = raw.indexOf(USER_MARKER);
+        if (!raw.contains(SYSTEM_MARKER) || userIdx < 0) {
+            throw new IllegalStateException(path + " must contain both markers");
+        }
+        String system = raw.substring(raw.indexOf(SYSTEM_MARKER) + SYSTEM_MARKER.length(), userIdx).trim();
+        String user = raw.substring(userIdx + USER_MARKER.length()).trim();
+        return new Prompt(system, user);
+    }
+
     private String readResource(String path) {
         try (InputStream in = new ClassPathResource(path).getInputStream()) {
             return StreamUtils.copyToString(in, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException("Unable to load prompt resource: " + path, e);
+        }
+    }
+
+    /** A parsed system/user prompt pair. */
+    private static final class Prompt {
+        final String system;
+        final String user;
+
+        Prompt(String system, String user) {
+            this.system = system;
+            this.user = user;
         }
     }
 }

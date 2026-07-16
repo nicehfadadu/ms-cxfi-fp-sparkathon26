@@ -2,26 +2,22 @@ package com.nice.saas.cxfi.sparkathon.model;
 
 import lombok.Data;
 
-import java.util.List;
-
 /**
- * Response of {@code GET /sparkathon/insights}: the full-population predicted CSAT
- * plus prioritized actions. Exactly the shape the insights UI renders.
+ * Response of {@code GET /sparkathon/insights}: the tenant's interactions split into two
+ * independently-analysed segments. Respondents are analysed by comparing actual vs
+ * predicted CSAT; non-respondents on predicted CSAT alone.
  */
 @Data
 public class InsightsResponse {
 
     private String tenantId;
 
-    /** Total interactions for the tenant. */
+    /** Total interactions across both segments. */
     private int totalInteractions;
 
-    /** Interactions with a predicted CSAT (the average's denominator). */
-    private int predictedScored;
+    /** Customers who returned a survey score — analysed on actual vs predicted. */
+    private InsightsSegment respondents;
 
-    /** Full-population predicted CSAT — the summary banner number. */
-    private double avgPredictedCsat;
-
-    /** Recommended actions, ranked worst-topic first. */
-    private List<RecommendedAction> actions;
+    /** Customers with no survey response — analysed on predicted CSAT alone. */
+    private InsightsSegment nonRespondents;
 }

@@ -15,7 +15,14 @@ public class RecommendedAction {
     private String topic;
     private double predictedCsat;
     private int chats;
-    private String gap;           // concrete difference between low- and high-scoring interactions
+
+    // Respondent-segment only (actual vs predicted). Null for the non-respondent segment.
+    private Double actualCsat;    // average survey CSAT for the topic
+    private Double residual;      // avg (actual − predicted)
+    private String direction;     // over-predicted | under-predicted | aligned
+
+    private String gap;           // respondent: the model gap (predicted vs actual). non-respondent: low-vs-high difference
+    private String reason;        // respondent only: likely reason for the actual score / the divergence
     private String what;
     private String why;
 }
