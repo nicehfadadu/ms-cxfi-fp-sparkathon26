@@ -126,7 +126,27 @@ public class CsatScoreRepository {
                 tenantId, uuid, topics, subTopics);
     }
 
-     /* Fetches a single record by its primary key.
+    /**
+     * Updates the {@code actual_csat_score} attribute on an existing record.
+     */
+    public void updateActualCsatScore(String tenantId, String uuid, Double score) {
+        dynamoDbClient.updateItem(UpdateItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "tenantId", AttributeValue.fromS(tenantId),
+                        "uuid", AttributeValue.fromS(uuid)
+                ))
+                .updateExpression("SET actual_csat_score = :score")
+                .expressionAttributeValues(Map.of(
+                        ":score", AttributeValue.fromN(score.toString())
+                ))
+                .build());
+
+        log.info("Updated actual_csat_score={} for tenantId={} uuid={}", score, tenantId, uuid);
+    }
+
+    /**
+     * Fetches a single record by its primary key.
      *
      * @throws IllegalArgumentException if no item exists for the given tenantId + uuid
      */
