@@ -8,10 +8,11 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.ProfileCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.s3.S3Client;
 
 /**
- * Wires the AWS clients (Bedrock runtime + S3).
+ * Wires the AWS clients (Bedrock runtime + S3 + DynamoDB).
  *
  * <p>Credentials: under the {@code local} Spring profile they come from a named AWS
  * profile ({@code AWS_PROFILE} env var, defaulting to "sparkathon"); otherwise the
@@ -45,6 +46,14 @@ public class BedrockConfig {
     @Bean
     public S3Client s3Client(AwsCredentialsProvider credentialsProvider) {
         return S3Client.builder()
+                .region(region())
+                .credentialsProvider(credentialsProvider)
+                .build();
+    }
+
+    @Bean
+    public DynamoDbClient dynamoDbClient(AwsCredentialsProvider credentialsProvider) {
+        return DynamoDbClient.builder()
                 .region(region())
                 .credentialsProvider(credentialsProvider)
                 .build();
