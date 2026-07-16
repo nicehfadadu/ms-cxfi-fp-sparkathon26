@@ -5,8 +5,12 @@ topic-ai:
   # Base URL of the ms-cxfi-eligibility-engine service exposing /topic-ai
   base-url: https://api-na1.dev.niceincontact.com
   send-transcript-path: /feedback-intelligence/transcripts/topic-ai
-  # Optional bearer token for authenticated environments
-  bearer-token: ${TOPIC_AI_BEARER_TOKEN:}
+  result-path: /feedback-intelligence/transcripts/{correlationId}/topic-ai
+  # Hard-coded bearer token for eligibility MS (replace with real token for dev/test)
+  bearer-token: ${TOPIC_AI_BEARER_TOKEN:REPLACE_WITH_REAL_TOKEN}
+  # Poll every 5 s, give up after 2 min
+  result-poll-interval-ms: 5000
+  result-poll-timeout-ms: 120000
 
 logging:
   level:

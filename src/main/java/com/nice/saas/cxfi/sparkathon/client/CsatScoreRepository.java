@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -74,5 +75,52 @@ public class CsatScoreRepository {
                 .build());
 
         log.info("Stored CSAT-score record tenantId={} uuid={}", tenantId, uuid);
+    }
+
+    /**
+     * Updates an existing DynamoDB record with the list of detected topics and subtopics
+     * returned by the TopicAI inference result.
+     *
+     * @param tenantId       partition key
+     * @param uuid           sort key (transcript id)
+     * @param topics         list of topic names from primaryTopic + secondaryTopics
+     * @param subTopics      list of subTopic values from the TopicAI result (may be empty)
+     */
+    public void updateTopics(String tenantId, String uuid, List<String> topics, List<String> subTopics) {
+        Map<String, AttributeValue> key = Map.of(
+                "tenantId", AttributeValue.fromS(tenantId),
+                "uuid", AttributeValue.fromS(uuid)
+        );
+
+        Map<String, AttributeValue> expressionValues = new HashMap<>();
+        StringBuilder updateExpr = new StringBuilder("SET ");
+
+        if (topics != null && !topics.isEmpty()) {
+            expressionValues.put(":topics", AttributeValue.fromSs(topics));
+            updateExpr.append("topics_detected = :topics");
+        }
+
+        if (subTopics != null && !subTopics.isEmpty()) {
+            expressionValues.put(":subtopics", AttributeValue.fromSs(subTopics));
+            if (expressionValues.containsKey(":topics")) {
+                updateExpr.append(", ");
+            }
+            updateExpr.append("sub_topics_detected = :subtopics");
+        }
+
+        if (expressionValues.isEmpty()) {
+            log.info("No topics or subtopics to update for tenantId={} uuid={}", tenantId, uuid);
+            return;
+        }
+
+        dynamoDbClient.updateItem(UpdateItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(key)
+                .updateExpression(updateExpr.toString())
+                .expressionAttributeValues(expressionValues)
+                .build());
+
+        log.info("Updated topics for tenantId={} uuid={} topics={} subTopics={}",
+                tenantId, uuid, topics, subTopics);
     }
 }

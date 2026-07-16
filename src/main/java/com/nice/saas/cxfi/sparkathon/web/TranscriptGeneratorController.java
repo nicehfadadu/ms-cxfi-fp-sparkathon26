@@ -2,6 +2,7 @@ package com.nice.saas.cxfi.sparkathon.web;
 
 import com.nice.saas.cxfi.sparkathon.client.BedrockTranscriptGenerator;
 import com.nice.saas.cxfi.sparkathon.client.CsatScoreRepository;
+import com.nice.saas.cxfi.sparkathon.client.TopicAiPipelineService;
 import com.nice.saas.cxfi.sparkathon.client.TranscriptFragmentBuilder;
 import com.nice.saas.cxfi.sparkathon.client.TranscriptS3Writer;
 import com.nice.saas.cxfi.sparkathon.model.GenerateTranscriptRequest;
@@ -34,15 +35,18 @@ public class TranscriptGeneratorController {
     private final TranscriptFragmentBuilder fragmentBuilder;
     private final TranscriptS3Writer s3Writer;
     private final CsatScoreRepository csatScoreRepository;
+    private final TopicAiPipelineService pipelineService;
 
     public TranscriptGeneratorController(BedrockTranscriptGenerator generator,
                                          TranscriptFragmentBuilder fragmentBuilder,
                                          TranscriptS3Writer s3Writer,
-                                         CsatScoreRepository csatScoreRepository) {
+                                         CsatScoreRepository csatScoreRepository,
+                                         TopicAiPipelineService pipelineService) {
         this.generator = generator;
         this.fragmentBuilder = fragmentBuilder;
         this.s3Writer = s3Writer;
         this.csatScoreRepository = csatScoreRepository;
+        this.pipelineService = pipelineService;
     }
 
     /**
@@ -62,9 +66,14 @@ public class TranscriptGeneratorController {
         String fragmentS3Uri = s3Writer.save(transcriptId, FRAGMENT_FILE, fragment);
 
         // Record the transcript in DynamoDB. CSAT scores and detected topics are
-        // populated later by the scoring step, so they are null at creation time.
+        // populated later by the TopicAI pipeline, so they are null at creation time.
         csatScoreRepository.save(fragment.getTenantId(), transcriptId, s3Uri, fragmentS3Uri,
                 null, null, null);
+
+        // Kick off the TopicAI pipeline in the background: reads the fragment from S3,
+        // sends it to the eligibility MS, polls for the result, and updates DynamoDB
+        // with the detected topics and subtopics.
+        pipelineService.processAsync(transcriptId, fragment.getTenantId(), fragmentS3Uri);
 
         GenerateTranscriptResponse response = new GenerateTranscriptResponse();
         response.setTranscriptId(transcriptId);
