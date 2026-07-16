@@ -65,14 +65,15 @@ public class TranscriptGeneratorController {
         SendTranscriptRequest fragment = fragmentBuilder.build(transcriptId, transcript);
         String fragmentS3Uri = s3Writer.save(transcriptId, FRAGMENT_FILE, fragment);
 
-        // Record the transcript in DynamoDB. CSAT scores and detected topics are
-        // populated later by the TopicAI pipeline, so they are null at creation time.
+        // Record the transcript in DynamoDB. Detected topics and predicted CSAT are
+        // populated by the TopicAI pipeline (see below), so they are null here.
         csatScoreRepository.save(fragment.getTenantId(), transcriptId, s3Uri, fragmentS3Uri,
                 null, null, null);
 
         // Kick off the TopicAI pipeline in the background: reads the fragment from S3,
-        // sends it to the eligibility MS, polls for the result, and updates DynamoDB
-        // with the detected topics and subtopics.
+        // sends it to the eligibility MS, polls for the result, predicts CSAT via
+        // Bedrock against the raw chat, and writes topics + subtopics + predicted
+        // CSAT back to DynamoDB in a single UpdateItem.
         pipelineService.processAsync(transcriptId, fragment.getTenantId(), fragmentS3Uri);
 
         GenerateTranscriptResponse response = new GenerateTranscriptResponse();

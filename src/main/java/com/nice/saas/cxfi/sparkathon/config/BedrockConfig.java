@@ -10,6 +10,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 
 /**
  * Wires the AWS clients (Bedrock runtime + S3 + DynamoDB).
@@ -54,6 +55,14 @@ public class BedrockConfig {
     @Bean
     public DynamoDbClient dynamoDbClient(AwsCredentialsProvider credentialsProvider) {
         return DynamoDbClient.builder()
+                .region(region())
+                .credentialsProvider(credentialsProvider)
+                .build();
+    }
+
+    @Bean
+    public SecretsManagerClient secretsManagerClient(AwsCredentialsProvider credentialsProvider) {
+        return SecretsManagerClient.builder()
                 .region(region())
                 .credentialsProvider(credentialsProvider)
                 .build();

@@ -1,5 +1,6 @@
 package com.nice.saas.cxfi.sparkathon.client;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nice.saas.cxfi.sparkathon.config.TopicAiProperties;
 import com.nice.saas.cxfi.sparkathon.model.SendTranscriptRequest;
 import com.nice.saas.cxfi.sparkathon.model.SendTranscriptResponse;
@@ -7,8 +8,8 @@ import com.nice.saas.cxfi.sparkathon.model.TopicAiResultResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
@@ -18,6 +19,9 @@ import java.util.UUID;
 /**
  * Client that calls the Feedback Intelligence {@code /topic-ai} send-transcript API
  * and polls for the TopicAI inference result.
+ *
+ * <p>The bearer token is sourced from AWS Secrets Manager via {@link TokenProvider}
+ * rather than from application config.
  */
 @Component
 public class TopicAiClient {
@@ -26,9 +30,14 @@ public class TopicAiClient {
 
     private final RestClient restClient;
     private final TopicAiProperties properties;
+    private final TokenProvider tokenProvider;
+    private final ObjectMapper objectMapper;
 
-    public TopicAiClient(RestClient.Builder builder, TopicAiProperties properties) {
+    public TopicAiClient(RestClient.Builder builder, TopicAiProperties properties,
+                         TokenProvider tokenProvider, ObjectMapper objectMapper) {
         this.properties = properties;
+        this.tokenProvider = tokenProvider;
+        this.objectMapper = objectMapper;
         this.restClient = builder.baseUrl(properties.getBaseUrl()).build();
     }
 
@@ -50,11 +59,7 @@ public class TopicAiClient {
         var response = restClient.post()
                 .uri(properties.getSendTranscriptPath())
                 .contentType(MediaType.APPLICATION_JSON)
-                .headers(headers -> {
-                    if (StringUtils.hasText(properties.getBearerToken())) {
-                        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getBearerToken());
-                    }
-                })
+                .headers(headers -> headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + tokenProvider.getToken()))
                 .body(request)
                 .retrieve()
                 .toEntity(String.class);
@@ -112,24 +117,38 @@ public class TopicAiClient {
     }
 
     /**
-     * Single attempt to fetch the TopicAI result. Returns {@code null} if the result is not ready (404).
+     * Single attempt to fetch the TopicAI result via
+     * {@code GET /feedback-intelligence/transcripts/{correlationId}/topic-ai?tenantId=...}.
+     * Returns {@code null} if the result is not ready yet (404) or the body is empty.
+     * Any other 4xx/5xx propagates as an exception so the caller can log and retry.
      */
     private TopicAiResultResponse fetchResult(String correlationId, String tenantId) {
+        // Build path matching eligibility MS: /{correlationId}/topic-ai?tenantId=...
         String path = properties.getResultPath()
                 .replace("{correlationId}", correlationId)
                 + "?tenantId=" + tenantId;
 
-        return restClient.get()
+        ResponseEntity<String> entity = restClient.get()
                 .uri(path)
-                .headers(headers -> {
-                    if (StringUtils.hasText(properties.getBearerToken())) {
-                        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getBearerToken());
-                    }
-                })
+                .headers(headers -> headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + tokenProvider.getToken()))
                 .retrieve()
-                .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
-                    // 404 means not ready yet — return null rather than throw
-                })
-                .body(TopicAiResultResponse.class);
+                .onStatus(status -> status.value() == 404, (req, resp) -> { /* not ready — handled below */ })
+                .toEntity(String.class);
+
+        if (entity.getStatusCode().value() == 404) {
+            return null;
+        }
+
+        String body = entity.getBody();
+        if (!StringUtils.hasText(body)) {
+            return null;
+        }
+
+        try {
+            return objectMapper.readValue(body, TopicAiResultResponse.class);
+        } catch (Exception e) {
+            log.warn("Could not deserialize TopicAI result — correlationId={}: {}", correlationId, e.getMessage());
+            return null;
+        }
     }
 }
