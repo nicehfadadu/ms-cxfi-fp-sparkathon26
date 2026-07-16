@@ -8,10 +8,10 @@ import java.util.stream.Collectors;
  */
 public enum Temperament {
 
-    CALM("Calm", "The customer is calm, polite and cooperative throughout."),
-    POSITIVE("Positive", "The customer is upbeat, warm and appreciative, and thanks the agent often."),
-    FRUSTRATED("Frustrated", "The customer is clearly frustrated and difficult, though never abusive."),
-    MIXED("Mixed", "The customer starts frustrated but gradually calms down as the agent helps them.");
+    CALM("Calm", "The customer is calm, polite and cooperative from the first turn through the closing turn. Their closing message is polite — a short thanks or a neutral acknowledgement."),
+    POSITIVE("Positive", "The customer is upbeat, warm and appreciative throughout. Their closing message contains explicit appreciation ('thanks so much', 'you were amazing', 'really appreciate it')."),
+    FRUSTRATED("Frustrated", "The customer is clearly frustrated and stays that way from the first turn through the closing turn — the agent's professionalism does NOT calm them down. Their closing message reflects unresolved anger: explicit complaint ('unacceptable', 'nightmare', 'worst experience'), grudging acceptance ('Ugh, fine', 'I guess I have no choice'), impatience, a threat (chargeback, cancellation, escalation, bad review), or sarcastic acknowledgement — never a thank-you, never appreciation."),
+    MIXED("Mixed", "The customer STARTS frustrated but gradually calms down as the agent helps them, ending appreciative or at least polite. This is the ONLY temperament where the closing sentiment differs from the opening.");
 
     private final String key;
     private final String phrase;

@@ -36,7 +36,7 @@ public class BedrockTranscriptGenerator {
     private static final String USER_MARKER = "===USER===";
 
     /** Bedrock model (or inference profile) id used with the Converse API. */
-    private static final String MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
+    private static final String MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
 
     /** Maximum tokens to generate for a transcript. */
     private static final int MAX_TOKENS = 2048;
