@@ -11,6 +11,7 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -166,5 +167,59 @@ public class CsatScoreRepository {
 
         log.info("Fetched CSAT-score record tenantId={} uuid={}", tenantId, uuid);
         return response.item();
+    }
+
+    /**
+     * Fills in the prediction fields on an existing row created by {@link #save}. Called
+     * after the chat is resolved/closed and the Bedrock CSAT predictor has scored it.
+     *
+     * @param tenantId              partition key
+     * @param uuid                  sort key (the transcript id)
+     * @param predictedCsatScore    predicted CSAT (1..5), required
+     * @param predictionConfidence  model self-reported confidence 0..1, or {@code null}
+     * @param topicsDetected        topics inferred from the chat, or {@code null}/empty
+     */
+    public void updatePrediction(String tenantId,
+                                 String uuid,
+                                 Double predictedCsatScore,
+                                 Double predictionConfidence,
+                                 List<String> topicsDetected) {
+
+        Map<String, String> names = new HashMap<>();
+        Map<String, AttributeValue> values = new HashMap<>();
+        List<String> sets = new ArrayList<>();
+
+        names.put("#p", "predicted_csat_score");
+        values.put(":p", AttributeValue.fromN(predictedCsatScore.toString()));
+        sets.add("#p = :p");
+
+        names.put("#u", "predicted_at");
+        values.put(":u", AttributeValue.fromS(Instant.now().toString()));
+        sets.add("#u = :u");
+
+        if (predictionConfidence != null) {
+            names.put("#c", "prediction_confidence");
+            values.put(":c", AttributeValue.fromN(predictionConfidence.toString()));
+            sets.add("#c = :c");
+        }
+        if (topicsDetected != null && !topicsDetected.isEmpty()) {
+            names.put("#t", "topics_detected");
+            values.put(":t", AttributeValue.fromSs(topicsDetected));
+            sets.add("#t = :t");
+        }
+
+        Map<String, AttributeValue> key = new HashMap<>();
+        key.put("tenantId", AttributeValue.fromS(tenantId));
+        key.put("uuid", AttributeValue.fromS(uuid));
+
+        dynamoDbClient.updateItem(UpdateItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(key)
+                .updateExpression("SET " + String.join(", ", sets))
+                .expressionAttributeNames(names)
+                .expressionAttributeValues(values)
+                .build());
+
+        log.info("Updated CSAT prediction tenantId={} uuid={} score={}", tenantId, uuid, predictedCsatScore);
     }
 }

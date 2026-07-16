@@ -22,4 +22,7 @@ public class GenerateTranscriptResponse {
 
     /** The generated turns, each a single-key object keyed by speaker. */
     private List<Map<String, String>> transcript;
+
+    /** CSAT prediction produced by the Bedrock scorer once the chat is closed. */
+    private CsatPrediction prediction;
 }
