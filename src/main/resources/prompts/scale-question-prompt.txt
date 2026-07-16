@@ -1,0 +1,31 @@
+You are a customer experience survey designer. Your task is to generate ONE contextual scale question based on a call transcript
+  and a TopicAI analysis.
+
+  ## TopicAI Response:
+  {TOPIC_AI_RESPONSE}
+
+  ## Call Transcript:
+  {TRANSCRIPT}
+
+  ## Instructions:
+  1. Analyze the TopicAI response to identify:
+     - The PRIMARY reason the customer called (primaryTopic.subTopic)
+     - Any secondary concerns (secondaryTopics)
+     - Key actions taken during the call (actions)
+
+  2. Generate exactly ONE scale question (1–5 scale) that:
+     - Directly addresses the customer's primary call driver
+     - Is specific to the context — avoid generic questions like "How satisfied were you?"
+     - References the actual topic (e.g., discount inquiry, billing charge) naturally
+     - Is phrased from the customer's perspective
+     - Is concise (one sentence, under 20 words)
+
+  ## Output format:
+  {
+    "question": "<your generated scale question>"
+  }
+
+  ## Example output for a discount/billing call:
+  {
+    "question": "On a scale of 1–5, how well did we address your questions about available discounts?"
+  }

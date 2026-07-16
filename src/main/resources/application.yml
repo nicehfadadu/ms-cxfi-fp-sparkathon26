@@ -12,6 +12,11 @@ topic-ai:
   result-poll-interval-ms: 5000
   result-poll-timeout-ms: 120000
 
+aws:
+  region: ${AWS_REGION:us-east-1}
+  bedrock:
+    model-id: ${BEDROCK_MODEL_ID:us.amazon.nova-pro-v1:0}
+
 logging:
   level:
     com.nice.saas.cxfi.sparkathon: INFO

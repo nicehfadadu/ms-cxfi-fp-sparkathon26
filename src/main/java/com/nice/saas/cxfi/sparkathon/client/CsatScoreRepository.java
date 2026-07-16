@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 
@@ -122,5 +124,27 @@ public class CsatScoreRepository {
 
         log.info("Updated topics for tenantId={} uuid={} topics={} subTopics={}",
                 tenantId, uuid, topics, subTopics);
+    }
+
+     /* Fetches a single record by its primary key.
+     *
+     * @throws IllegalArgumentException if no item exists for the given tenantId + uuid
+     */
+    public Map<String, AttributeValue> getItem(String tenantId, String uuid) {
+        GetItemResponse response = dynamoDbClient.getItem(GetItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "tenantId", AttributeValue.fromS(tenantId),
+                        "uuid", AttributeValue.fromS(uuid)
+                ))
+                .build());
+
+        if (!response.hasItem() || response.item().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No DynamoDB record found for tenantId=" + tenantId + " uuid=" + uuid);
+        }
+
+        log.info("Fetched CSAT-score record tenantId={} uuid={}", tenantId, uuid);
+        return response.item();
     }
 }
