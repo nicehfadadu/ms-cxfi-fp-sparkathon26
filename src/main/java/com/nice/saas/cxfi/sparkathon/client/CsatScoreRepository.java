@@ -81,50 +81,56 @@ public class CsatScoreRepository {
     }
 
     /**
-     * Updates an existing DynamoDB record with the list of detected topics and subtopics
-     * returned by the TopicAI inference result.
+     * Updates an existing DynamoDB record with detected topics, subtopics, and the
+     * predicted CSAT score — all written in a single {@code UpdateItem} call.
      *
-     * @param tenantId       partition key
-     * @param uuid           sort key (transcript id)
-     * @param topics         list of topic names from primaryTopic + secondaryTopics
-     * @param subTopics      list of subTopic values from the TopicAI result (may be empty)
+     * @param tenantId           partition key
+     * @param uuid               sort key (transcript id)
+     * @param topics             topic names from primaryTopic + secondaryTopics (stored as SS)
+     * @param subTopics          subTopic values from the TopicAI result (stored as SS, may be empty)
+     * @param predictedCsatScore predicted CSAT in [1.0, 5.0], or {@code null} if unavailable
      */
-    public void updateTopics(String tenantId, String uuid, List<String> topics, List<String> subTopics) {
+    public void updateTopics(String tenantId, String uuid,
+                             List<String> topics, List<String> subTopics,
+                             Double predictedCsatScore) {
         Map<String, AttributeValue> key = Map.of(
                 "tenantId", AttributeValue.fromS(tenantId),
                 "uuid", AttributeValue.fromS(uuid)
         );
 
         Map<String, AttributeValue> expressionValues = new HashMap<>();
-        StringBuilder updateExpr = new StringBuilder("SET ");
+        List<String> setClauses = new java.util.ArrayList<>();
 
         if (topics != null && !topics.isEmpty()) {
             expressionValues.put(":topics", AttributeValue.fromSs(topics));
-            updateExpr.append("topics_detected = :topics");
+            setClauses.add("topics_detected = :topics");
         }
 
         if (subTopics != null && !subTopics.isEmpty()) {
             expressionValues.put(":subtopics", AttributeValue.fromSs(subTopics));
-            if (expressionValues.containsKey(":topics")) {
-                updateExpr.append(", ");
-            }
-            updateExpr.append("sub_topics_detected = :subtopics");
+            setClauses.add("sub_topics_detected = :subtopics");
         }
 
-        if (expressionValues.isEmpty()) {
-            log.info("No topics or subtopics to update for tenantId={} uuid={}", tenantId, uuid);
+        if (predictedCsatScore != null) {
+            expressionValues.put(":predicted", AttributeValue.fromN(
+                    String.format("%.2f", predictedCsatScore)));
+            setClauses.add("predicted_csat_score = :predicted");
+        }
+
+        if (setClauses.isEmpty()) {
+            log.info("Nothing to update for tenantId={} uuid={}", tenantId, uuid);
             return;
         }
 
         dynamoDbClient.updateItem(UpdateItemRequest.builder()
                 .tableName(TABLE_NAME)
                 .key(key)
-                .updateExpression(updateExpr.toString())
+                .updateExpression("SET " + String.join(", ", setClauses))
                 .expressionAttributeValues(expressionValues)
                 .build());
 
-        log.info("Updated topics for tenantId={} uuid={} topics={} subTopics={}",
-                tenantId, uuid, topics, subTopics);
+        log.info("Updated TopicAI results for tenantId={} uuid={} topics={} subTopics={} predictedCsat={}",
+                tenantId, uuid, topics, subTopics, predictedCsatScore);
     }
 
     /**
