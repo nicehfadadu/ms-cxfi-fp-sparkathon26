@@ -37,8 +37,12 @@ public class InsightsAggregator {
 
     /** Max transcripts fed to the LLM per band (low / high) for each topic. */
     private static final int SAMPLES_PER_BAND = 4;
-    /** A topic must have at least this many scored interactions to be ranked. */
-    private static final int MIN_SCORED_PER_TOPIC = 2;
+    /**
+     * A topic must have at least this many scored interactions to be ranked. One means even a
+     * single interaction yields an action; a topic with only one sample has no low-vs-high
+     * contrast, so its lone transcript is surfaced in the low band with the high band empty.
+     */
+    private static final int MIN_SCORED_PER_TOPIC = 1;
     /** |avgResidual| within this band means the predictor is considered aligned with reality. */
     private static final double ALIGN_TOLERANCE = 0.5;
 
@@ -164,9 +168,17 @@ public class InsightsAggregator {
         }
 
         int band = Math.min(SAMPLES_PER_BAND, sorted.size() / 2);
-        List<TranscriptSample> low = new ArrayList<>(sorted.subList(0, band));
-        List<TranscriptSample> high = new ArrayList<>(sorted.subList(sorted.size() - band, sorted.size()));
-        Collections.reverse(high);
+        List<TranscriptSample> low;
+        List<TranscriptSample> high;
+        if (band == 0) {
+            // Fewer than 2 samples: no contrast possible — surface the lone interaction as low.
+            low = new ArrayList<>(sorted);
+            high = new ArrayList<>();
+        } else {
+            low = new ArrayList<>(sorted.subList(0, band));
+            high = new ArrayList<>(sorted.subList(sorted.size() - band, sorted.size()));
+            Collections.reverse(high);
+        }
         t.setLowSamples(low);
         t.setHighSamples(high);
         return t;

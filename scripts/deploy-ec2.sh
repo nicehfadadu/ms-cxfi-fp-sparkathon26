@@ -32,6 +32,16 @@ INSTANCE_PROFILE="${INSTANCE_PROFILE:-sparkathon-ec2-s3-profile}"
 OWNER_TAG="${OWNER_TAG:-Rushabh.Pawar}"
 NAME_TAG="${NAME_TAG:-sparkathon-d6866-transcript}"
 
+# The instance is fronted by CloudFront (E14617QRBKPUBQ) via API Gateway + VPC Link ->
+# internal ALB. CloudFront/API Gateway/VPC Link/ALB are stable; only the ALB target
+# changes on redeploy, so registering the fresh instance below is what wires it back
+# into the public path. SECURITY_GROUP_ID already allows inbound 80 from the ALB SG.
+TARGET_GROUP_ARN="${TARGET_GROUP_ARN:-arn:aws:elasticloadbalancing:us-east-1:710894194408:targetgroup/d6866-app-tg/37af9a32606c6bf2}"
+CF_DOMAIN="${CF_DOMAIN:-d3lqblen33vqcl.cloudfront.net}"
+# Set TERMINATE_OLD=true to terminate drained (deregistered) instances at the end.
+# Default false: old boxes are only drained from the ALB, never auto-terminated.
+TERMINATE_OLD="${TERMINATE_OLD:-false}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AWS=(aws --profile "$AWS_PROFILE" --region "$AWS_REGION")
 
@@ -79,13 +89,62 @@ for i in $(seq 1 30); do
   sleep 10
 done
 
+echo ">> Registering the new instance with the ALB target group..."
+"${AWS[@]}" elbv2 register-targets \
+  --target-group-arn "$TARGET_GROUP_ARN" \
+  --targets "Id=$INSTANCE_ID,Port=80"
+
+echo ">> Waiting for the target to pass ALB health checks..."
+for i in $(seq 1 30); do
+  STATE=$("${AWS[@]}" elbv2 describe-target-health \
+    --target-group-arn "$TARGET_GROUP_ARN" \
+    --targets "Id=$INSTANCE_ID,Port=80" \
+    --query 'TargetHealthDescriptions[0].TargetHealth.State' --output text 2>/dev/null || echo unknown)
+  echo "   ALB target health: $STATE"
+  [ "$STATE" = "healthy" ] && break
+  sleep 10
+done
+
+echo ">> Deregistering stale targets (keep only $INSTANCE_ID)..."
+# Roll the ALB over to the fresh instance so redeploys don't leave dead/old targets
+# behind. Old instances remain running until you terminate them separately.
+STALE=$("${AWS[@]}" elbv2 describe-target-health \
+  --target-group-arn "$TARGET_GROUP_ARN" \
+  --query "TargetHealthDescriptions[?Target.Id!='$INSTANCE_ID'].Target.Id" --output text)
+for t in $STALE; do
+  echo "   deregistering $t"
+  "${AWS[@]}" elbv2 deregister-targets --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$t" || true
+done
+
+if [ "$TERMINATE_OLD" = "true" ] && [ -n "${STALE// /}" ]; then
+  echo ">> TERMINATE_OLD=true: waiting for drained targets to leave the ALB, then terminating them..."
+  for t in $STALE; do
+    "${AWS[@]}" elbv2 wait target-deregistered \
+      --target-group-arn "$TARGET_GROUP_ARN" --targets "Id=$t,Port=80" 2>/dev/null || true
+  done
+  # Never terminate the instance we just deployed, even if it somehow appears in STALE.
+  TO_KILL=""
+  for t in $STALE; do
+    [ "$t" != "$INSTANCE_ID" ] && TO_KILL="$TO_KILL $t"
+  done
+  if [ -n "${TO_KILL// /}" ]; then
+    echo "   terminating:$TO_KILL"
+    "${AWS[@]}" ec2 terminate-instances --instance-ids $TO_KILL \
+      --query 'TerminatingInstances[].{Id:InstanceId,Now:CurrentState.Name}' --output text || true
+  fi
+fi
+
 GENERATE_URL="http://$PRIVATE_IP/sparkathon/transcript/generate"
 echo ""
 echo "Deployed to VPC_Type_1 (private). InstanceId: $INSTANCE_ID  PrivateIP: $PRIVATE_IP"
 echo "  Health:   $HEALTH_URL   (VPN only)"
 echo "  Endpoint: $GENERATE_URL (VPN only)"
 echo ""
-echo "Sample request (run on VPN, or from the box via SSM against localhost):"
-echo "  curl -X POST $GENERATE_URL \\"
+echo "Attached to ALB target group; reachable publicly via CloudFront:"
+echo "  https://$CF_DOMAIN/sparkathon/transcript/generate"
+echo "  https://$CF_DOMAIN/sparkathon/insights?tenantId=<tenantId>"
+echo ""
+echo "Sample request (public, via CloudFront):"
+echo "  curl -X POST https://$CF_DOMAIN/sparkathon/transcript/generate \\"
 echo "    -H 'Content-Type: application/json' \\"
 echo "    -d '{\"topic\":\"billing\",\"temperament\":\"Frustrated\"}'"

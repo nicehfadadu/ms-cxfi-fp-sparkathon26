@@ -20,7 +20,8 @@ public enum TopicType {
     WARRANTY("warranty", "a warranty claim for a faulty product"),
     FRAUD("fraud", "a suspected fraudulent or unauthorized charge on the account"),
     UPGRADE("upgrade", "a plan or subscription upgrade / add-on request"),
-    PRODUCT_INFO("product-info", "a pre-sale product information / availability inquiry"),
+    PRODUCT_INFO("product", "a product information / recommendation inquiry"),
+    SUBSCRIPTION("subscription", "a subscription renewal or management question"),
     OUTAGE("outage", "a service outage or downtime report"),
     FEEDBACK("feedback", "general feedback, a suggestion or a compliment about the service");
 
