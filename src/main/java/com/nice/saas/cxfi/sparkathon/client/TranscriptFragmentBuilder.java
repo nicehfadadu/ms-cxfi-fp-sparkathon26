@@ -16,9 +16,9 @@ import java.util.Map;
 @Component
 public class TranscriptFragmentBuilder {
 
-    private static final String TENANT_ID = "e2e-travel-hospitality-tenant";
+    private static final String TENANT_ID = "11f16fc2-78c4-d4a0-b24e-0242ac110002";
     private static final String LANGUAGE = "en-US";
-    private static final String MODEL_ID = "anthropic.claude-3-haiku";
+//    private static final String MODEL_ID = "anthropic.claude-3-haiku";
     private static final String MODEL_VERSION = "1.0";
 
     private static final int WORD_DURATION_MS = 300;
@@ -62,8 +62,8 @@ public class TranscriptFragmentBuilder {
         fragment.setTenantId(TENANT_ID);
         fragment.setLanguage(LANGUAGE);
         fragment.setCorrelationId(transcriptId);
-        fragment.setModelId(MODEL_ID);
-        fragment.setModelVersion(MODEL_VERSION);
+//        fragment.setModelId(MODEL_ID);
+//        fragment.setModelVersion(MODEL_VERSION);
         fragment.setPhrases(phrases);
         return fragment;
     }

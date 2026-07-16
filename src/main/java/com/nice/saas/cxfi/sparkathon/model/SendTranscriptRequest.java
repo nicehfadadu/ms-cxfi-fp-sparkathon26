@@ -11,7 +11,7 @@ import java.util.List;
 @Data
 public class SendTranscriptRequest {
 
-    private String tenantId;
+    private String tenantId = "11f16fc2-78c4-d4a0-b24e-0242ac110002";
     private String language;
     private String correlationId;
     private String modelId;
