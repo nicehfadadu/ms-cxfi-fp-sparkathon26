@@ -1,7 +1,9 @@
 package com.nice.saas.cxfi.sparkathon.client;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.json.JsonReadFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.nice.saas.cxfi.sparkathon.model.CsatPrediction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,17 +38,32 @@ public class BedrockCsatPredictor {
     private static final String SYSTEM_MARKER = "===SYSTEM===";
     private static final String USER_MARKER = "===USER===";
 
-    /** Bedrock model (or inference profile) id used with the Converse API. */
-    private static final String MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0";
+    /**
+     * Bedrock model (inference profile) used with the Converse API. Sonnet is the smallest
+     * Claude model that reliably produces valid JSON for multi-sentence string values and
+     * whose reasoning-first output actually influences the committed score — Haiku 3
+     * frequently drops opening quotes on long values and defaults to score 3 even when
+     * its own reasoning contradicts it.
+     */
+    private static final String MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
 
-    /** Prediction output is compact JSON — plenty of headroom here. */
-    private static final int MAX_TOKENS = 512;
+    /**
+     * Prediction output includes chain-of-reasoning + verbatim key phrases + next-best-action
+     * on top of the classification fields, so give it comfortable headroom.
+     */
+    private static final int MAX_TOKENS = 1024;
 
     /** Low temperature: we want deterministic classification, not creativity. */
     private static final float TEMPERATURE = 0.2f;
 
     private final BedrockRuntimeClient client;
     private final ObjectMapper objectMapper;
+    /** Lenient reader used only for parsing model output — accepts single quotes and unescaped control chars. */
+    private final ObjectMapper lenientMapper = JsonMapper.builder()
+            .enable(JsonReadFeature.ALLOW_SINGLE_QUOTES)
+            .enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS)
+            .enable(JsonReadFeature.ALLOW_TRAILING_COMMA)
+            .build();
 
     private final String systemPrompt;
     private final String userPromptTemplate;
@@ -84,29 +101,71 @@ public class BedrockCsatPredictor {
 
         log.info("Predicting CSAT via Bedrock model={} turns={}", MODEL_ID, transcript.size());
 
-        ConverseResponse response = client.converse(req -> req
-                .modelId(MODEL_ID)
-                .system(SystemContentBlock.fromText(systemPrompt))
-                .messages(Message.builder()
-                        .role(ConversationRole.USER)
-                        .content(ContentBlock.fromText(userPrompt))
-                        .build())
-                .inferenceConfig(cfg -> cfg
-                        .maxTokens(MAX_TOKENS)
-                        .temperature(TEMPERATURE)));
-
-        String text = response.output().message().content().get(0).text();
-        return parsePrediction(text);
+        String firstText = converseOnce(userPrompt, null, null);
+        try {
+            return parsePrediction(firstText);
+        } catch (IOException initial) {
+            // Long multi-sentence string values sometimes come back with a missing opening
+            // quote. Ask the model to resend as strict JSON, feeding the malformed output
+            // back so it can self-correct. One retry only.
+            log.warn("Initial CSAT prediction JSON did not parse — asking model to resend as strict JSON");
+            String retryText = converseOnce(userPrompt, firstText,
+                    "Your previous response was not valid JSON. Resend the SAME object as strict JSON — "
+                            + "every string value MUST be wrapped in double quotes, no unquoted values, "
+                            + "no prose, no markdown fences. Only the JSON object.");
+            try {
+                return parsePrediction(retryText);
+            } catch (IOException retry) {
+                log.error("Failed to parse CSAT prediction JSON after retry. Original output: {}\nRetry output: {}",
+                        firstText, retryText, retry);
+                throw new IllegalStateException("Bedrock returned a CSAT prediction that was not valid JSON", retry);
+            }
+        }
     }
 
-    private CsatPrediction parsePrediction(String modelOutput) {
+    /**
+     * One round-trip to Bedrock. If {@code priorAssistantText} is non-null the call includes
+     * the model's previous reply plus a corrective follow-up user message ({@code followupUser}).
+     */
+    private String converseOnce(String userPrompt, String priorAssistantText, String followupUser) {
+        ConverseResponse response = client.converse(req -> {
+            req.modelId(MODEL_ID)
+                    .system(SystemContentBlock.fromText(systemPrompt))
+                    .inferenceConfig(cfg -> cfg
+                            .maxTokens(MAX_TOKENS)
+                            .temperature(TEMPERATURE));
+            if (priorAssistantText == null) {
+                req.messages(Message.builder()
+                        .role(ConversationRole.USER)
+                        .content(ContentBlock.fromText(userPrompt))
+                        .build());
+            } else {
+                req.messages(
+                        Message.builder()
+                                .role(ConversationRole.USER)
+                                .content(ContentBlock.fromText(userPrompt))
+                                .build(),
+                        Message.builder()
+                                .role(ConversationRole.ASSISTANT)
+                                .content(ContentBlock.fromText(priorAssistantText))
+                                .build(),
+                        Message.builder()
+                                .role(ConversationRole.USER)
+                                .content(ContentBlock.fromText(followupUser))
+                                .build());
+            }
+        });
+        return response.output().message().content().get(0).text();
+    }
+
+    /**
+     * Parses the model's output into a {@link CsatPrediction}. Uses a lenient JSON reader
+     * that tolerates single quotes and unescaped control chars — malformed enough to fail
+     * that still triggers a retry from {@link #predict}.
+     */
+    private CsatPrediction parsePrediction(String modelOutput) throws IOException {
         String json = extractJsonObject(modelOutput);
-        try {
-            return objectMapper.readValue(json, CsatPrediction.class);
-        } catch (IOException e) {
-            log.error("Failed to parse CSAT prediction JSON from model output: {}", modelOutput, e);
-            throw new IllegalStateException("Bedrock returned a CSAT prediction that was not valid JSON", e);
-        }
+        return lenientMapper.readValue(json, CsatPrediction.class);
     }
 
     /** Trims any stray prose/markdown fences, keeping the outermost JSON object. */

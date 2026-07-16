@@ -249,11 +249,13 @@ public class CsatScoreRepository {
     }
 
     /**
-     * Packs a {@link CsatPrediction} into a DynamoDB Map attribute so all the LLM
-     * fields (confidence, sentiment trajectory, resolution status, repeat/churn risks,
-     * drivers, rationale, topicsDetected) plus a server-side {@code predictedAt}
-     * timestamp travel together on the row. Null/blank fields are omitted so the
-     * stored shape stays compact.
+     * Packs a {@link CsatPrediction} into a DynamoDB Map attribute so every LLM field
+     * (reasoning, confidence, opening/closing sentiment, sentiment trajectory,
+     * resolution status, effort level, escalation flag, recovery flag, agent effort,
+     * repeat-contact and churn risks, topicsDetected, drivers, topKeyPhrases,
+     * nextBestAction, rationale) plus a server-side {@code predictedAt} timestamp
+     * travel together on the row. Null/blank fields are omitted so the stored shape
+     * stays compact.
      */
     private static AttributeValue predictionMetadata(CsatPrediction p) {
         Map<String, AttributeValue> m = new HashMap<>();
@@ -263,10 +265,22 @@ public class CsatScoreRepository {
         if (p.getConfidence() != null) {
             m.put("confidence", AttributeValue.fromN(p.getConfidence().toString()));
         }
+        putStringIfPresent(m, "reasoning", p.getReasoning());
+        putStringIfPresent(m, "openingSentiment", p.getOpeningSentiment());
+        putStringIfPresent(m, "closingSentiment", p.getClosingSentiment());
         putStringIfPresent(m, "sentimentTrajectory", p.getSentimentTrajectory());
         putStringIfPresent(m, "resolutionStatus", p.getResolutionStatus());
+        putStringIfPresent(m, "effortLevel", p.getEffortLevel());
+        if (p.getEscalationRequested() != null) {
+            m.put("escalationRequested", AttributeValue.fromBool(p.getEscalationRequested()));
+        }
+        if (p.getRecoveryDetected() != null) {
+            m.put("recoveryDetected", AttributeValue.fromBool(p.getRecoveryDetected()));
+        }
+        putStringIfPresent(m, "agentEffort", p.getAgentEffort());
         putStringIfPresent(m, "predictedRepeatContactRisk", p.getPredictedRepeatContactRisk());
         putStringIfPresent(m, "predictedChurnRisk", p.getPredictedChurnRisk());
+        putStringIfPresent(m, "nextBestAction", p.getNextBestAction());
         putStringIfPresent(m, "rationale", p.getRationale());
         List<String> topics = trimmed(p.getTopicsDetected());
         if (!topics.isEmpty()) {
@@ -277,6 +291,12 @@ public class CsatScoreRepository {
         List<String> drivers = trimmed(p.getDrivers());
         if (!drivers.isEmpty()) {
             m.put("drivers", AttributeValue.fromL(drivers.stream()
+                    .map(AttributeValue::fromS)
+                    .collect(Collectors.toList())));
+        }
+        List<String> keyPhrases = trimmed(p.getTopKeyPhrases());
+        if (!keyPhrases.isEmpty()) {
+            m.put("topKeyPhrases", AttributeValue.fromL(keyPhrases.stream()
                     .map(AttributeValue::fromS)
                     .collect(Collectors.toList())));
         }
