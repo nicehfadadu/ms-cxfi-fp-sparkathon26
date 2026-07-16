@@ -18,6 +18,9 @@ import java.util.UUID;
 /**
  * Client that calls the Feedback Intelligence {@code /topic-ai} send-transcript API
  * and polls for the TopicAI inference result.
+ *
+ * <p>The bearer token is sourced from AWS Secrets Manager via {@link TokenProvider}
+ * rather than from application config.
  */
 @Component
 public class TopicAiClient {
@@ -26,9 +29,12 @@ public class TopicAiClient {
 
     private final RestClient restClient;
     private final TopicAiProperties properties;
+    private final TokenProvider tokenProvider;
 
-    public TopicAiClient(RestClient.Builder builder, TopicAiProperties properties) {
+    public TopicAiClient(RestClient.Builder builder, TopicAiProperties properties,
+                         TokenProvider tokenProvider) {
         this.properties = properties;
+        this.tokenProvider = tokenProvider;
         this.restClient = builder.baseUrl(properties.getBaseUrl()).build();
     }
 
@@ -50,11 +56,7 @@ public class TopicAiClient {
         var response = restClient.post()
                 .uri(properties.getSendTranscriptPath())
                 .contentType(MediaType.APPLICATION_JSON)
-                .headers(headers -> {
-                    if (StringUtils.hasText(properties.getBearerToken())) {
-                        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getBearerToken());
-                    }
-                })
+                .headers(headers -> headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + tokenProvider.getToken()))
                 .body(request)
                 .retrieve()
                 .toEntity(String.class);
@@ -121,11 +123,7 @@ public class TopicAiClient {
 
         return restClient.get()
                 .uri(path)
-                .headers(headers -> {
-                    if (StringUtils.hasText(properties.getBearerToken())) {
-                        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getBearerToken());
-                    }
-                })
+                .headers(headers -> headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + tokenProvider.getToken()))
                 .retrieve()
                 .onStatus(HttpStatusCode::is4xxClientError, (req, resp) -> {
                     // 404 means not ready yet — return null rather than throw
