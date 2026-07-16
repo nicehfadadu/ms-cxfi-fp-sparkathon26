@@ -1,5 +1,7 @@
 package com.nice.saas.cxfi.sparkathon.client;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -31,9 +33,11 @@ public class CsatScoreRepository {
     private static final String TABLE_NAME = "d6866-feedback-csat-scores";
 
     private final DynamoDbClient dynamoDbClient;
+    private final ObjectMapper objectMapper;
 
-    public CsatScoreRepository(DynamoDbClient dynamoDbClient) {
+    public CsatScoreRepository(DynamoDbClient dynamoDbClient, ObjectMapper objectMapper) {
         this.dynamoDbClient = dynamoDbClient;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -81,25 +85,27 @@ public class CsatScoreRepository {
     }
 
     /**
-     * Updates an existing DynamoDB record with detected topics, subtopics, and the
-     * predicted CSAT score — all written in a single {@code UpdateItem} call.
+     * Updates an existing DynamoDB record with detected topics, subtopics, the full raw
+     * TopicAI response, and the predicted CSAT score — all in a single {@code UpdateItem}.
      *
      * @param tenantId           partition key
      * @param uuid               sort key (transcript id)
      * @param topics             topic names from primaryTopic + secondaryTopics (stored as SS)
      * @param subTopics          subTopic values from the TopicAI result (stored as SS, may be empty)
      * @param predictedCsatScore predicted CSAT in [1.0, 5.0], or {@code null} if unavailable
+     * @param topicAiResponse    the complete TopicAI response object; serialized to JSON and
+     *                           stored as the {@code topicai_response} string attribute
      */
     public void updateTopics(String tenantId, String uuid,
                              List<String> topics, List<String> subTopics,
-                             Double predictedCsatScore) {
+                             Double predictedCsatScore, Object topicAiResponse) {
         Map<String, AttributeValue> key = Map.of(
                 "tenantId", AttributeValue.fromS(tenantId),
                 "uuid", AttributeValue.fromS(uuid)
         );
 
         Map<String, AttributeValue> expressionValues = new HashMap<>();
-        List<String> setClauses = new java.util.ArrayList<>();
+        List<String> setClauses = new ArrayList<>();
 
         if (topics != null && !topics.isEmpty()) {
             expressionValues.put(":topics", AttributeValue.fromSs(topics));
@@ -115,6 +121,17 @@ public class CsatScoreRepository {
             expressionValues.put(":predicted", AttributeValue.fromN(
                     String.format("%.2f", predictedCsatScore)));
             setClauses.add("predicted_csat_score = :predicted");
+        }
+
+        if (topicAiResponse != null) {
+            try {
+                String json = objectMapper.writeValueAsString(topicAiResponse);
+                expressionValues.put(":topicai", AttributeValue.fromS(json));
+                setClauses.add("topicai_response = :topicai");
+            } catch (JsonProcessingException e) {
+                log.warn("Could not serialize topicAiResponse for tenantId={} uuid={}: {}",
+                        tenantId, uuid, e.getMessage());
+            }
         }
 
         if (setClauses.isEmpty()) {

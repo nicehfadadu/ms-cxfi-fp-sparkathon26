@@ -122,9 +122,10 @@ public class TopicAiPipelineService {
         log.info("TopicAI result parsed — transcriptId={} topics={} subTopics={} predictedCsat={}",
                 transcriptId, topics, subTopics, predictedCsat);
 
-        // Step 6: Write to DynamoDB in a single UpdateItem
+        // Step 6: Write topics, subtopics, predicted CSAT, and the full raw TopicAI response
+        //         to DynamoDB in a single UpdateItem
         try {
-            csatScoreRepository.updateTopics(tenantId, transcriptId, topics, subTopics, predictedCsat);
+            csatScoreRepository.updateTopics(tenantId, transcriptId, topics, subTopics, predictedCsat, result);
         } catch (Exception e) {
             log.error("DynamoDB update failed — transcriptId={}: {}", transcriptId, e.getMessage());
             return PipelineResult.failure(transcriptId, "DynamoDB update failed: " + e.getMessage());
